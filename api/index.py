@@ -35,13 +35,13 @@ with col1:
 
 with col2:
     min_subs = st.number_input("Min Followers", value=1000, step=500)
-    max_subs = st.number_input("Max Followers", value=100000, step=5000)
+    max_subs = st.number_input("Max Followers", value=1000000, step=10000)
 
 with col3:
     limit = st.slider("Creators Limit", 10, 10000, 100)
-    region_code = st.selectbox("Регион (YouTube Region)", ["US", "ES", "RU", "GB", "DE", "FR", "ALL"])
+    region_code = st.selectbox("Регион (YouTube Region)", ["ALL", "US", "ES", "RU", "GB", "DE", "FR", "CA", "AU"])
+    relevance_language = st.selectbox("Язык контента (Relevance Language)", ["ALL", "en", "es", "ru", "fr", "de"])
 
-# Дополнительный фильтр по ключевым словам в описании
 keyword_filter = st.text_input("Обязательное слово в описании (оставьте пустым для отключения)", "")
 
 def extract_email(text):
@@ -51,7 +51,7 @@ def extract_email(text):
     match = re.search(email_pattern, text)
     return match.group(0).lower() if match else "N/A"
 
-def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, region, kw_filter):
+def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, region, lang, kw_filter):
     youtube = build('youtube', 'v3', developerKey=api_key)
     results = []
     seen_emails = set()
@@ -79,6 +79,8 @@ def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, re
                 }
                 if region != "ALL":
                     search_params["regionCode"] = region
+                if lang != "ALL":
+                    search_params["relevanceLanguage"] = lang
                     
                 search_req = youtube.search().list(**search_params)
                 search_res = search_req.execute()
@@ -108,7 +110,6 @@ def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, re
                 if min_s <= subs <= max_s:
                     description = item['snippet'].get('description', '')
                     
-                    # Проверка фильтра по ключевому слову в описании
                     if kw_filter and kw_filter.lower() not in description.lower():
                         continue
                         
@@ -156,8 +157,8 @@ if st.button("🚀 Start Scraping"):
         if not yt_api_key:
             st.error("Укажите YouTube Data API Key в сайдбаре слева")
         else:
-            with st.spinner("Сбор, фильтрация по ключевым словам и дедупликация..."):
-                df, scanned = scrape_youtube_paginated(query, min_subs, max_subs, limit, yt_api_key, region_code, keyword_filter)
+            with st.spinner("Сбор, фильтрация по региону и языку, дедупликация..."):
+                df, scanned = scrape_youtube_paginated(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
                 if not df.empty:
                     combined = pd.concat([st.session_state.leads_db, df]).drop_duplicates(subset=["Email"])
                     st.session_state.leads_db = combined
