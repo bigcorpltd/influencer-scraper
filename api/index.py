@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import re
 from googleapiclient.discovery import build
 
 st.set_page_config(page_title="Multi-Platform Influencer Finder", layout="wide")
@@ -23,6 +24,14 @@ with col2:
 with col3:
     limit = st.slider("Creators Limit", 10, 500, 50)
     export_format = st.radio("Export Format", ["CSV", "JSON"])
+
+def extract_email(text):
+    """Поиск email в тексте с помощью регулярных выражений"""
+    if not text:
+        return "N/A"
+    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    match = re.search(email_pattern, text)
+    return match.group(0) if match else "N/A"
 
 def scrape_youtube_paginated(query, min_s, max_s, target_limit, api_key):
     youtube = build('youtube', 'v3', developerKey=api_key)
@@ -52,11 +61,15 @@ def scrape_youtube_paginated(query, min_s, max_s, target_limit, api_key):
         for item in ch_res.get('items', []):
             subs = int(item['statistics'].get('subscriberCount', 0))
             if min_s <= subs <= max_s:
+                description = item['snippet'].get('description', '')
+                email = extract_email(description)
+                
                 results.append({
                     "Platform": "YouTube",
                     "Channel Title": item['snippet']['title'],
                     "Subscribers": subs,
-                    "Custom URL": item['snippet'].get('customUrl', 'N/A'),
+                    "Email": email,
+                    "Handle": item['snippet'].get('customUrl', 'N/A'),
                     "Channel ID": item['id'],
                     "Link": f"https://www.youtube.com/channel/{item['id']}"
                 })
@@ -70,29 +83,38 @@ def scrape_youtube_paginated(query, min_s, max_s, target_limit, api_key):
     return pd.DataFrame(results)
 
 def scrape_apify(platform, query, target_limit, token):
-    # Использование готового актера Apify (instagram-scraper / tiktok-scraper)
     actor_id = "apify/instagram-scraper" if platform == "Instagram" else "clockworks/free-tiktok-scraper"
     url = f"https://api.apify.com/v2/acts/{actor_id}/runs?token={token}"
     
     payload = {"search": query, "resultsLimit": target_limit}
-    res = requests.post(url, json=payload).json()
-    st.info("Apify Task Started. Check Apify Dashboard for execution logs.")
+    try:
+        res = requests.post(url, json=payload)
+        if res.status_code == 201 or res.status_code == 200:
+            st.info(f"Запрос отправлен в Apify для {platform}. Проверьте Apify Console для получения результатов.")
+        else:
+            st.error(f"Ошибка Apify API: {res.text}")
+    except Exception as e:
+        st.error(f"Ошибка подключения к Apify: {str(e)}")
     return pd.DataFrame()
 
 if st.button("🚀 Start Scraping"):
     if platform == "YouTube":
         if not yt_api_key:
-            st.error("Missing YouTube Data API Key")
+            st.error("Укажите YouTube Data API Key в сайдбаре слева")
         else:
-            with st.spinner("Scraping YouTube with pagination..."):
+            with st.spinner("Сбор данных YouTube и парсинг Email..."):
                 df = scrape_youtube_paginated(query, min_subs, max_subs, limit, yt_api_key)
                 if not df.empty:
-                    st.success(f"Found {len(df)} channels matching criteria!")
+                    st.success(f"Найдено каналов: {len(df)}")
                     st.dataframe(df)
+                    
+                    # Кнопка скачивания
+                    csv = df.to_csv(index=False).encode('utf-8')
+                    st.download_button("📥 Скачать CSV", csv, "influencers.csv", "text/csv")
                 else:
-                    st.warning("No records found matching criteria.")
+                    st.warning("Каналы по заданным критериям не найдены.")
     else:
         if not apify_token:
-            st.error(f"Missing Apify API Token for {platform}")
+            st.error(f"Укажите Apify API Token в сайдбаре слева для {platform}")
         else:
             scrape_apify(platform, query, limit, apify_token)
