@@ -43,14 +43,18 @@ def scrape_youtube_paginated(query, min_s, max_s, target_limit, api_key):
     status_text = st.empty()
     
     while len(results) < target_limit:
-        search_req = youtube.search().list(
-            q=query,
-            type='channel',
-            part='id,snippet',
-            maxResults=50,
-            pageToken=next_page_token
-        )
-        search_res = search_req.execute()
+        try:
+            search_req = youtube.search().list(
+                q=query,
+                type='channel',
+                part='id,snippet',
+                maxResults=50,
+                pageToken=next_page_token
+            )
+            search_res = search_req.execute()
+        except Exception as e:
+            st.error(f"Ошибка лимита YouTube API: {str(e)}")
+            break
         
         channel_ids = [item['id']['channelId'] for item in search_res.get('items', [])]
         if not channel_ids:
@@ -64,7 +68,7 @@ def scrape_youtube_paginated(query, min_s, max_s, target_limit, api_key):
         
         items = ch_res.get('items', [])
         scanned_count += len(items)
-        status_text.text(f"Просканировано каналов: {scanned_count} | Найдено уникальных: {len(results)}")
+        status_text.text(f"Просканировано каналов: {scanned_count} | Найдено уникальных с E-mail: {len(results)}")
         
         for item in items:
             ch_id = item['id']
