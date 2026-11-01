@@ -59,7 +59,8 @@ def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, re
     seen_ids = set(st.session_state.leads_db['Channel ID'].tolist()) if not st.session_state.leads_db.empty else set()
     scanned_count = 0
     
-    modifiers = ["", "review", "tech", "gadgets", "unboxing", "2026", "creator", "channel", "Top", "best"]
+    # Упрощенные модификаторы для стабильного поиска без нулевых выдач
+    modifiers = ["", "review", "tech", "gadgets", "unboxing"]
     queries = [f"{base_query} {mod}".strip() for mod in modifiers]
     
     status_text = st.empty()
@@ -161,7 +162,6 @@ if st.button("🚀 Start Scraping"):
             with st.spinner("Сбор, фильтрация и накопление базы..."):
                 df, scanned = scrape_youtube_paginated(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
                 if not df.empty:
-                    # Надежное добавление в сессию с защитой от дублей
                     st.session_state.leads_db = pd.concat([st.session_state.leads_db, df]).drop_duplicates(subset=["Email"]).reset_index(drop=True)
                     
                     st.success(f"Просканировано: {scanned} | Добавлено новых: {len(df)} | Всего в базе: {len(st.session_state.leads_db)}")
