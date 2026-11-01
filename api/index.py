@@ -97,3 +97,11 @@ if submit_button:
             st.download_button("📥 Download JSON", json_data, "leads.json", "application/json")
     else:
         st.warning("No records found matching criteria.")
+
+import streamlit as st
+
+st.title("Influencer Leads Scraper")
+# Основной код приложения...
+
+# Обязательный экспортируемый объект для Vercel Serverless
+app = st
