@@ -7,7 +7,7 @@ from googleapiclient.discovery import build
 st.set_page_config(page_title="Multi-Platform Influencer Finder", layout="wide")
 st.title("🎯 Multi-Platform Influencer Leads Finder")
 
-# Инициализация базы данных (сессии) для накопления лидов
+# Инициализация базы данных в session_state
 if "leads_db" not in st.session_state:
     st.session_state.leads_db = pd.DataFrame(columns=["Platform", "Channel Title", "Subscribers", "Email", "Handle", "Channel ID", "Link"])
 
@@ -17,16 +17,17 @@ with st.sidebar:
     apify_token = st.text_input("Apify API Token (IG/TikTok)", type="password")
     
     st.markdown("---")
-    st.header("База сохраненных лидов")
-    if not st.session_state.leads_db.empty:
-        st.success(f"Накоплено лидов: {len(st.session_state.leads_db)}")
+    st.header("💾 База лидов")
+    total_leads = len(st.session_state.leads_db)
+    st.info(f"Накоплено уникальных лидов: {total_leads}")
+    
+    if total_leads > 0:
         csv_all = st.session_state.leads_db.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Скачать всю базу CSV", csv_all, "all_accumulated_leads.csv", "text/csv")
+        st.download_button("📥 Скачать всю базу (CSV)", csv_all, "all_accumulated_leads.csv", "text/csv")
+        
         if st.button("🗑 Очистить всю базу"):
             st.session_state.leads_db = pd.DataFrame(columns=["Platform", "Channel Title", "Subscribers", "Email", "Handle", "Channel ID", "Link"])
             st.rerun()
-    else:
-        st.info("База пуста")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -54,11 +55,11 @@ def extract_email(text):
 def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, region, lang, kw_filter):
     youtube = build('youtube', 'v3', developerKey=api_key)
     results = []
-    seen_emails = set()
-    seen_ids = set()
+    seen_emails = set(st.session_state.leads_db['Email'].tolist()) if not st.session_state.leads_db.empty else set()
+    seen_ids = set(st.session_state.leads_db['Channel ID'].tolist()) if not st.session_state.leads_db.empty else set()
     scanned_count = 0
     
-    modifiers = ["", "review", "tech", "gadgets", "unboxing", "2026", "creator", "channel"]
+    modifiers = ["", "review", "tech", "gadgets", "unboxing", "2026", "creator", "channel", "Top", "best"]
     queries = [f"{base_query} {mod}".strip() for mod in modifiers]
     
     status_text = st.empty()
@@ -77,7 +78,6 @@ def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, re
                     "maxResults": 50,
                     "pageToken": next_page_token
                 }
-                # Передаем параметры только если выбрано не ALL
                 if region != "ALL":
                     search_params["regionCode"] = region
                 if lang != "ALL":
@@ -100,7 +100,7 @@ def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, re
             
             items = ch_res.get('items', [])
             scanned_count += len(items)
-            status_text.text(f"Поиск: '{q}' | Просканировано: {scanned_count} | Найдено уникальных: {len(results)}")
+            status_text.text(f"Поиск: '{q}' | Просканировано: {scanned_count} | Найдено новых уникальных: {len(results)}")
             
             for item in items:
                 ch_id = item['id']
@@ -158,19 +158,19 @@ if st.button("🚀 Start Scraping"):
         if not yt_api_key:
             st.error("Укажите YouTube Data API Key в сайдбаре слева")
         else:
-            with st.spinner("Сбор, фильтрация и дедупликация..."):
+            with st.spinner("Сбор, фильтрация и накопление базы..."):
                 df, scanned = scrape_youtube_paginated(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
                 if not df.empty:
-                    combined = pd.concat([st.session_state.leads_db, df]).drop_duplicates(subset=["Email"])
-                    st.session_state.leads_db = combined
+                    # Надежное добавление в сессию с защитой от дублей
+                    st.session_state.leads_db = pd.concat([st.session_state.leads_db, df]).drop_duplicates(subset=["Email"]).reset_index(drop=True)
                     
-                    st.success(f"Просканировано: {scanned} | Новых уникальных с E-mail: {len(df)} | Всего в базе накопилось: {len(st.session_state.leads_db)}")
+                    st.success(f"Просканировано: {scanned} | Добавлено новых: {len(df)} | Всего в базе: {len(st.session_state.leads_db)}")
                     st.dataframe(df)
                     
                     csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Скачать текущий результат CSV", csv, "influencers_batch.csv", "text/csv")
+                    st.download_button("📥 Скачать этот батч (CSV)", csv, "influencers_batch.csv", "text/csv")
                 else:
-                    st.warning(f"Просканировано каналов: {scanned}, но подходящих с уникальным E-mail не найдено.")
+                    st.warning(f"Просканировано каналов: {scanned}, но новых уникальных E-mail не найдено.")
     else:
         if not apify_token:
             st.error(f"Укажите Apify API Token в сайдбаре слева для {platform}")
