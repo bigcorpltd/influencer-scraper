@@ -19,14 +19,13 @@ with col1:
 
 with col2:
     min_subs = st.number_input("Min Followers", value=1000, step=500)
-    max_subs = st.number_input("Max Followers", value=10000, step=1000)
+    max_subs = st.number_input("Max Followers", value=100000, step=5000)
 
 with col3:
-    limit = st.slider("Creators Limit", 10, 500, 50)
+    limit = st.slider("Creators Limit", 10, 10000, 100)
     export_format = st.radio("Export Format", ["CSV", "JSON"])
 
 def extract_email(text):
-    """Поиск email в тексте с помощью регулярных выражений"""
     if not text:
         return "N/A"
     email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
@@ -43,7 +42,7 @@ def scrape_youtube_paginated(query, min_s, max_s, target_limit, api_key):
             q=query,
             type='channel',
             part='id,snippet',
-            maxResults=min(50, target_limit - len(results)),
+            maxResults=50,
             pageToken=next_page_token
         )
         search_res = search_req.execute()
@@ -64,17 +63,19 @@ def scrape_youtube_paginated(query, min_s, max_s, target_limit, api_key):
                 description = item['snippet'].get('description', '')
                 email = extract_email(description)
                 
-                results.append({
-                    "Platform": "YouTube",
-                    "Channel Title": item['snippet']['title'],
-                    "Subscribers": subs,
-                    "Email": email,
-                    "Handle": item['snippet'].get('customUrl', 'N/A'),
-                    "Channel ID": item['id'],
-                    "Link": f"https://www.youtube.com/channel/{item['id']}"
-                })
-                if len(results) >= target_limit:
-                    break
+                # ИСКЛЮЧАЕМ БЛОГЕРОВ БЕЗ ПОЧТЫ
+                if email != "N/A":
+                    results.append({
+                        "Platform": "YouTube",
+                        "Channel Title": item['snippet']['title'],
+                        "Subscribers": subs,
+                        "Email": email,
+                        "Handle": item['snippet'].get('customUrl', 'N/A'),
+                        "Channel ID": item['id'],
+                        "Link": f"https://www.youtube.com/channel/{item['id']}"
+                    })
+                    if len(results) >= target_limit:
+                        break
                     
         next_page_token = search_res.get('nextPageToken')
         if not next_page_token:
@@ -89,12 +90,12 @@ def scrape_apify(platform, query, target_limit, token):
     payload = {"search": query, "resultsLimit": target_limit}
     try:
         res = requests.post(url, json=payload)
-        if res.status_code == 201 or res.status_code == 200:
-            st.info(f"Запрос отправлен в Apify для {platform}. Проверьте Apify Console для получения результатов.")
+        if res.status_code in [200, 201]:
+            st.info(f"Запрос отправлен в Apify для {platform}. Проверьте Apify Console.")
         else:
             st.error(f"Ошибка Apify API: {res.text}")
     except Exception as e:
-        st.error(f"Ошибка подключения к Apify: {str(e)}")
+        st.error(f"Ошибка подключения: {str(e)}")
     return pd.DataFrame()
 
 if st.button("🚀 Start Scraping"):
@@ -102,17 +103,16 @@ if st.button("🚀 Start Scraping"):
         if not yt_api_key:
             st.error("Укажите YouTube Data API Key в сайдбаре слева")
         else:
-            with st.spinner("Сбор данных YouTube и парсинг Email..."):
+            with st.spinner("Сбор валидных каналов с E-mail..."):
                 df = scrape_youtube_paginated(query, min_subs, max_subs, limit, yt_api_key)
                 if not df.empty:
-                    st.success(f"Найдено каналов: {len(df)}")
+                    st.success(f"Найдено каналов с E-mail: {len(df)}")
                     st.dataframe(df)
                     
-                    # Кнопка скачивания
                     csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Скачать CSV", csv, "influencers.csv", "text/csv")
+                    st.download_button("📥 Скачать CSV", csv, "influencers_with_emails.csv", "text/csv")
                 else:
-                    st.warning("Каналы по заданным критериям не найдены.")
+                    st.warning("Каналы с E-mail по вашим критериям не найдены.")
     else:
         if not apify_token:
             st.error(f"Укажите Apify API Token в сайдбаре слева для {platform}")
