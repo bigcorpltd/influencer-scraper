@@ -77,6 +77,7 @@ def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, re
                     "maxResults": 50,
                     "pageToken": next_page_token
                 }
+                # Передаем параметры только если выбрано не ALL
                 if region != "ALL":
                     search_params["regionCode"] = region
                 if lang != "ALL":
@@ -157,7 +158,7 @@ if st.button("🚀 Start Scraping"):
         if not yt_api_key:
             st.error("Укажите YouTube Data API Key в сайдбаре слева")
         else:
-            with st.spinner("Сбор, фильтрация по региону и языку, дедупликация..."):
+            with st.spinner("Сбор, фильтрация и дедупликация..."):
                 df, scanned = scrape_youtube_paginated(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
                 if not df.empty:
                     combined = pd.concat([st.session_state.leads_db, df]).drop_duplicates(subset=["Email"])
