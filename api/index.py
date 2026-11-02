@@ -176,7 +176,8 @@ if st.button("🚀 Start Scraping"):
                         }
                         actor_id = "clockworks/tiktok-scraper"
                         
-                    run = client.actor(actor_id).call(run_input=run_input, timeout_secs=120)
+                    # Убран не поддерживаемый аргумент timeout_secs
+                    run = client.actor(actor_id).call(run_input=run_input)
                     
                     dataset_id = None
                     if isinstance(run, dict):
