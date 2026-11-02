@@ -164,19 +164,18 @@ if st.button("🚀 Start Scraping"):
                     
                     if platform == "Instagram":
                         run_input = {
-                            "search": query,
-                            "searchType": "user",
+                            "directUrls": [f"https://www.instagram.com/explore/search/keyword/?q={query}"],
                             "resultsLimit": limit,
                         }
                         actor_id = "apify/instagram-scraper"
                     else:
                         run_input = {
-                            "searchQueries": [query],
+                            "profiles": [query],
                             "resultsPerPage": limit,
+                            "shouldDownloadVideos": False,
                         }
                         actor_id = "clockworks/tiktok-scraper"
                         
-                    # Убран не поддерживаемый аргумент timeout_secs
                     run = client.actor(actor_id).call(run_input=run_input)
                     
                     dataset_id = None
@@ -194,7 +193,7 @@ if st.button("🚀 Start Scraping"):
                             if email and email != "N/A":
                                 results.append({
                                     "Platform": platform,
-                                    "Channel Title": item.get("fullName") or item.get("nickname") or item.get("username", "N/A"),
+                    "Channel Title": item.get("fullName") or item.get("nickname") or item.get("username", "N/A"),
                                     "Subscribers": item.get("followersCount") or item.get("followerCount", 0),
                                     "Email": email.lower(),
                                     "Handle": f"@{item.get('username') or item.get('uniqueId', 'N/A')}",
