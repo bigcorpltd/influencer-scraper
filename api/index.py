@@ -52,90 +52,83 @@ def extract_email(text):
     match = re.search(email_pattern, text)
     return match.group(0).lower() if match else "N/A"
 
-def scrape_youtube_paginated(base_query, min_s, max_s, target_limit, api_key, region, lang, kw_filter):
+def scrape_youtube_direct(base_query, min_s, max_s, target_limit, api_key, region, lang, kw_filter):
     youtube = build('youtube', 'v3', developerKey=api_key)
     results = []
     seen_emails = set(st.session_state.leads_db['Email'].tolist()) if not st.session_state.leads_db.empty else set()
     seen_ids = set(st.session_state.leads_db['Channel ID'].tolist()) if not st.session_state.leads_db.empty else set()
     scanned_count = 0
-    
-    # Упрощенные модификаторы для стабильного поиска без нулевых выдач
-    modifiers = ["", "review", "tech", "gadgets", "unboxing"]
-    queries = [f"{base_query} {mod}".strip() for mod in modifiers]
+    next_page_token = None
     
     status_text = st.empty()
     
-    for q in queries:
-        if len(results) >= target_limit:
+    while len(results) < target_limit:
+        try:
+            search_params = {
+                "q": base_query,
+                "type": 'channel',
+                "part": 'id,snippet',
+                "maxResults": 50,
+                "pageToken": next_page_token
+            }
+            if region != "ALL":
+                search_params["regionCode"] = region
+            if lang != "ALL":
+                search_params["relevanceLanguage"] = lang
+                
+            search_req = youtube.search().list(**search_params)
+            search_res = search_req.execute()
+        except Exception as e:
+            st.error(f"Ошибка API: {str(e)}")
+            break
+        
+        channel_ids = [item['id']['channelId'] for item in search_res.get('items', [])]
+        if not channel_ids:
             break
             
-        next_page_token = None
-        while len(results) < target_limit:
-            try:
-                search_params = {
-                    "q": q,
-                    "type": 'channel',
-                    "part": 'id,snippet',
-                    "maxResults": 50,
-                    "pageToken": next_page_token
-                }
-                if region != "ALL":
-                    search_params["regionCode"] = region
-                if lang != "ALL":
-                    search_params["relevanceLanguage"] = lang
-                    
-                search_req = youtube.search().list(**search_params)
-                search_res = search_req.execute()
-            except Exception as e:
-                break
-            
-            channel_ids = [item['id']['channelId'] for item in search_res.get('items', [])]
-            if not channel_ids:
-                break
+        ch_req = youtube.channels().list(
+            id=','.join(channel_ids),
+            part='snippet,statistics'
+        )
+        ch_res = ch_req.execute()
+        
+        items = ch_res.get('items', [])
+        scanned_count += len(items)
+        status_text.text(f"Просканировано: {scanned_count} | Найдено новых уникальных: {len(results)}")
+        
+        for item in items:
+            ch_id = item['id']
+            if ch_id in seen_ids:
+                continue
                 
-            ch_req = youtube.channels().list(
-                id=','.join(channel_ids),
-                part='snippet,statistics'
-            )
-            ch_res = ch_req.execute()
-            
-            items = ch_res.get('items', [])
-            scanned_count += len(items)
-            status_text.text(f"Поиск: '{q}' | Просканировано: {scanned_count} | Найдено новых уникальных: {len(results)}")
-            
-            for item in items:
-                ch_id = item['id']
-                if ch_id in seen_ids:
+            subs = int(item['statistics'].get('subscriberCount', 0))
+            if min_s <= subs <= max_s:
+                description = item['snippet'].get('description', '')
+                
+                if kw_filter and kw_filter.lower() not in description.lower():
                     continue
                     
-                subs = int(item['statistics'].get('subscriberCount', 0))
-                if min_s <= subs <= max_s:
-                    description = item['snippet'].get('description', '')
-                    
-                    if kw_filter and kw_filter.lower() not in description.lower():
-                        continue
-                        
-                    email = extract_email(description)
-                    
-                    if email != "N/A" and email not in seen_emails:
-                        seen_emails.add(email)
-                        seen_ids.add(ch_id)
-                        results.append({
-                            "Platform": "YouTube",
-                            "Channel Title": item['snippet']['title'],
-                            "Subscribers": subs,
-                            "Email": email,
-                            "Handle": item['snippet'].get('customUrl', 'N/A'),
-                            "Channel ID": ch_id,
-                            "Link": f"https://www.youtube.com/channel/{ch_id}"
-                        })
-                        if len(results) >= target_limit:
-                            break
-                        
-            next_page_token = search_res.get('nextPageToken')
-            if not next_page_token:
-                break
+                email = extract_email(description)
                 
+                if email != "N/A" and email not in seen_emails:
+                    seen_emails.add(email)
+                    seen_ids.add(ch_id)
+                    results.append({
+                        "Platform": "YouTube",
+                        "Channel Title": item['snippet']['title'],
+                        "Subscribers": subs,
+                        "Email": email,
+                        "Handle": item['snippet'].get('customUrl', 'N/A'),
+                        "Channel ID": ch_id,
+                        "Link": f"https://www.youtube.com/channel/{ch_id}"
+                    })
+                    if len(results) >= target_limit:
+                        break
+                    
+        next_page_token = search_res.get('nextPageToken')
+        if not next_page_token:
+            break
+            
     status_text.empty()
     return pd.DataFrame(results), scanned_count
 
@@ -159,8 +152,8 @@ if st.button("🚀 Start Scraping"):
         if not yt_api_key:
             st.error("Укажите YouTube Data API Key в сайдбаре слева")
         else:
-            with st.spinner("Сбор, фильтрация и накопление базы..."):
-                df, scanned = scrape_youtube_paginated(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
+            with st.spinner("Прямой поиск и накопление базы..."):
+                df, scanned = scrape_youtube_direct(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
                 if not df.empty:
                     st.session_state.leads_db = pd.concat([st.session_state.leads_db, df]).drop_duplicates(subset=["Email"]).reset_index(drop=True)
                     
