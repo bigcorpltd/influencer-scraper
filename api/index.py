@@ -38,7 +38,7 @@ with st.sidebar:
 col1, col2, col3 = st.columns(3)
 with col1:
     platform = st.selectbox("Platform", ["YouTube", "Instagram", "TikTok"])
-    query = st.text_input("Search Keyword / Username", "tech")
+    query = st.text_input("Search Keyword / Niche", "tech")
 
 with col2:
     min_subs = st.number_input("Min Followers", value=1000, step=500)
@@ -158,21 +158,22 @@ if st.button("🚀 Start Scraping"):
         if not apify_token:
             st.error("Укажите Apify API Token в сайдбаре слева")
         else:
-            with st.spinner(f"Запуск Apify парсера профилей для {platform}..."):
+            with st.spinner(f"Запуск поиска профилей и извлечения почт для {platform}..."):
                 try:
                     client = ApifyClient(apify_token)
                     
                     if platform == "Instagram":
-                        # Парсим именно профили через usernames или directUrls на аккаунты
+                        # Используем правильный поиск по пользователям через query в Instagram Scraper
                         run_input = {
-                            "usernames": [query.strip().replace("@", "")],
+                            "search": query,
+                            "searchType": "user",
                             "resultsLimit": limit,
                         }
                         actor_id = "apify/instagram-scraper"
                     else:
-                        # Парсим профили в TikTok
+                        # Поиск профилей в TikTok по ключевым словам
                         run_input = {
-                            "profiles": [query.strip().replace("@", "")],
+                            "searchQueries": [query],
                             "resultsPerPage": limit,
                             "shouldDownloadVideos": False,
                         }
@@ -187,12 +188,13 @@ if st.button("🚀 Start Scraping"):
                         dataset_id = getattr(run, "defaultDatasetId", None)
                     
                     if not dataset_id:
-                        st.error("Apify завершил задачу, но dataset ID не найден.")
+                        st.error("Apify завершил задачу, но dataset ID не найден. Измените поисковый запрос.")
                     else:
                         results = []
                         for item in client.dataset(dataset_id).iterate_items():
-                            bio_text = item.get("biography") or item.get("signature") or item.get("bio") or ""
-                            email = item.get("email") or extract_email(bio_text)
+                            # Собираем текст из всех возможных полей био профиля
+                            bio_text = item.get("biography") or item.get("signature") or item.get("bio") or item.get("description") or ""
+                            email = item.get("email") or item.get("businessEmail") or extract_email(bio_text)
                             
                             if keyword_filter and keyword_filter.lower() not in bio_text.lower():
                                 continue
@@ -217,7 +219,7 @@ if st.button("🚀 Start Scraping"):
                             csv = df_apify.to_csv(index=False).encode('utf-8')
                             st.download_button("📥 Скачать батч Apify (CSV)", csv, f"{platform.lower()}_leads.csv", "text/csv")
                         else:
-                            st.warning("Парсер профилей отработал, но почты в биографии не найдены.")
+                            st.warning("Парсер отработал, но профилей с открытыми e-mail в биографии по данному запросу не найдено.")
                         
                 except Exception as e:
                     st.error(f"Ошибка при работе с Apify API: {str(e)}")
