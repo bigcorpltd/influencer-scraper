@@ -9,7 +9,6 @@ import os
 st.set_page_config(page_title="Multi-Platform Influencer Finder", layout="wide")
 st.title("🎯 Multi-Platform Influencer Leads Finder")
 
-# Инициализация базы данных в session_state
 if "leads_db" not in st.session_state:
     st.session_state.leads_db = pd.DataFrame(columns=["Platform", "Channel Title", "Subscribers", "Email", "Handle", "Channel ID", "Link"])
 
@@ -38,7 +37,7 @@ with st.sidebar:
 col1, col2, col3 = st.columns(3)
 with col1:
     platform = st.selectbox("Platform", ["YouTube", "Instagram", "TikTok"])
-    query = st.text_input("Search Keyword / Niche", "tech")
+    query = st.text_input("Search Keyword / Username", "tech")
 
 with col2:
     min_subs = st.number_input("Min Followers", value=1000, step=500)
@@ -158,26 +157,25 @@ if st.button("🚀 Start Scraping"):
         if not apify_token:
             st.error("Укажите Apify API Token в сайдбаре слева")
         else:
-            with st.spinner(f"Запуск поиска профилей и извлечения почт для {platform}..."):
+            with st.spinner(f"Запуск парсера профилей для {platform}..."):
                 try:
                     client = ApifyClient(apify_token)
                     
                     if platform == "Instagram":
-                        # Используем правильный поиск по пользователям через query в Instagram Scraper
+                        # Используем специализированный актер для парсинга именно профилей/аккаунтов
                         run_input = {
-                            "search": query,
-                            "searchType": "user",
+                            "usernames": [query.strip().replace("@", "")],
                             "resultsLimit": limit,
                         }
-                        actor_id = "apify/instagram-scraper"
+                        actor_id = "apify/instagram-profile-scraper"
                     else:
-                        # Поиск профилей в TikTok по ключевым словам
+                        # Профильный парсер TikTok
                         run_input = {
-                            "searchQueries": [query],
+                            "profiles": [query.strip().replace("@", "")],
                             "resultsPerPage": limit,
                             "shouldDownloadVideos": False,
                         }
-                        actor_id = "clockworks/tiktok-scraper"
+                        actor_id = "clockworks/tiktok-profile-scraper"
                         
                     run = client.actor(actor_id).call(run_input=run_input)
                     
@@ -188,11 +186,10 @@ if st.button("🚀 Start Scraping"):
                         dataset_id = getattr(run, "defaultDatasetId", None)
                     
                     if not dataset_id:
-                        st.error("Apify завершил задачу, но dataset ID не найден. Измените поисковый запрос.")
+                        st.error("Apify завершил задачу, но dataset ID не найден.")
                     else:
                         results = []
                         for item in client.dataset(dataset_id).iterate_items():
-                            # Собираем текст из всех возможных полей био профиля
                             bio_text = item.get("biography") or item.get("signature") or item.get("bio") or item.get("description") or ""
                             email = item.get("email") or item.get("businessEmail") or extract_email(bio_text)
                             
@@ -219,7 +216,7 @@ if st.button("🚀 Start Scraping"):
                             csv = df_apify.to_csv(index=False).encode('utf-8')
                             st.download_button("📥 Скачать батч Apify (CSV)", csv, f"{platform.lower()}_leads.csv", "text/csv")
                         else:
-                            st.warning("Парсер отработал, но профилей с открытыми e-mail в биографии по данному запросу не найдено.")
+                            st.warning("Парсер профилей отработал, но почты в биографии не найдены.")
                         
                 except Exception as e:
                     st.error(f"Ошибка при работе с Apify API: {str(e)}")
