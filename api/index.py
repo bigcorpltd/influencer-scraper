@@ -39,7 +39,7 @@ with col2:
     max_subs = st.number_input("Max Followers", value=1000000, step=10000)
 
 with col3:
-    limit = st.slider("Creators Limit", 10, 10000, 100)
+    limit = st.slider("Creators Limit (Макс. каналов за запуск)", 10, 500, 50)
     region_code = st.selectbox("Регион (YouTube Region)", ["ALL", "US", "ES", "RU", "GB", "DE", "FR", "CA", "AU"])
     relevance_language = st.selectbox("Язык контента (Relevance Language)", ["ALL", "en", "es", "ru", "fr", "de"])
 
@@ -52,7 +52,7 @@ def extract_email(text):
     match = re.search(email_pattern, text)
     return match.group(0).lower() if match else "N/A"
 
-def scrape_youtube_direct(base_query, min_s, max_s, target_limit, api_key, region, lang, kw_filter):
+def scrape_youtube_optimized(base_query, min_s, max_s, target_limit, api_key, region, lang, kw_filter):
     youtube = build('youtube', 'v3', developerKey=api_key)
     results = []
     seen_emails = set(st.session_state.leads_db['Email'].tolist()) if not st.session_state.leads_db.empty else set()
@@ -62,6 +62,7 @@ def scrape_youtube_direct(base_query, min_s, max_s, target_limit, api_key, regio
     
     status_text = st.empty()
     
+    # Экономичный поиск: один поисковый запрос (100 единиц квоты) с пагинацией до лимита
     while len(results) < target_limit:
         try:
             search_params = {
@@ -79,7 +80,7 @@ def scrape_youtube_direct(base_query, min_s, max_s, target_limit, api_key, regio
             search_req = youtube.search().list(**search_params)
             search_res = search_req.execute()
         except Exception as e:
-            st.error(f"Ошибка API: {str(e)}")
+            st.error(f"Ошибка API (возможно, исчерпана квота 10,000 ед.): {str(e)}")
             break
         
         channel_ids = [item['id']['channelId'] for item in search_res.get('items', [])]
@@ -152,8 +153,8 @@ if st.button("🚀 Start Scraping"):
         if not yt_api_key:
             st.error("Укажите YouTube Data API Key в сайдбаре слева")
         else:
-            with st.spinner("Прямой поиск и накопление базы..."):
-                df, scanned = scrape_youtube_direct(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
+            with st.spinner("Экономичный поиск и накопление базы..."):
+                df, scanned = scrape_youtube_optimized(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
                 if not df.empty:
                     st.session_state.leads_db = pd.concat([st.session_state.leads_db, df]).drop_duplicates(subset=["Email"]).reset_index(drop=True)
                     
