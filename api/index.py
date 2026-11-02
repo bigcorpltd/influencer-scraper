@@ -38,7 +38,7 @@ with st.sidebar:
 col1, col2, col3 = st.columns(3)
 with col1:
     platform = st.selectbox("Platform", ["YouTube", "Instagram", "TikTok"])
-    query = st.text_input("Search Keyword / Niche", "unboxing amazon tech")
+    query = st.text_input("Search Keyword / Niche", "tech")
 
 with col2:
     min_subs = st.number_input("Min Followers", value=1000, step=500)
@@ -163,14 +163,17 @@ if st.button("🚀 Start Scraping"):
                     client = ApifyClient(apify_token)
                     
                     if platform == "Instagram":
+                        # Используем стабильный поиск по хештегу/ключу через directUrls
                         run_input = {
-                            "directUrls": [f"https://www.instagram.com/explore/search/keyword/?q={query}"],
+                            "search": query,
+                            "searchType": "hashtag",
                             "resultsLimit": limit,
                         }
                         actor_id = "apify/instagram-scraper"
                     else:
+                        # Поиск по хэштегам/ключам в TikTok
                         run_input = {
-                            "profiles": [query],
+                            "searchQueries": [query],
                             "resultsPerPage": limit,
                             "shouldDownloadVideos": False,
                         }
@@ -193,7 +196,7 @@ if st.button("🚀 Start Scraping"):
                             if email and email != "N/A":
                                 results.append({
                                     "Platform": platform,
-                    "Channel Title": item.get("fullName") or item.get("nickname") or item.get("username", "N/A"),
+                                    "Channel Title": item.get("fullName") or item.get("nickname") or item.get("username", "N/A"),
                                     "Subscribers": item.get("followersCount") or item.get("followerCount", 0),
                                     "Email": email.lower(),
                                     "Handle": f"@{item.get('username') or item.get('uniqueId', 'N/A')}",
