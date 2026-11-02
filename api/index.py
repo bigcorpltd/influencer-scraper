@@ -176,12 +176,16 @@ if st.button("🚀 Start Scraping"):
                         }
                         actor_id = "clockworks/tiktok-scraper"
                         
-                    run = client.actor(actor_id).call(run_input=run_input)
+                    run = client.actor(actor_id).call(run_input=run_input, timeout_secs=120)
                     
-                    dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else getattr(run, "defaultDatasetId", None)
+                    dataset_id = None
+                    if isinstance(run, dict):
+                        dataset_id = run.get("defaultDatasetId")
+                    else:
+                        dataset_id = getattr(run, "defaultDatasetId", None)
                     
                     if not dataset_id:
-                        st.error("Не удалось получить dataset ID от Apify.")
+                        st.error("Apify завершил задачу, но dataset ID не найден. Попробуйте уменьшить лимит или изменить поисковый запрос.")
                     else:
                         results = []
                         for item in client.dataset(dataset_id).iterate_items():
