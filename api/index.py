@@ -1,112 +1,72 @@
 import os
-import re
-from datetime import datetime
 import pandas as pd
-from googleapiclient.discovery import build
 
-# ================= НАСТРОЙКИ =================
-API_KEY = "ТВОЙ_API_KEY_ЗДЕСЬ"        # Вставь сюда свой API ключ Google
-MASTER_FILE = "master_database.xlsx"  # Главная база для проверки дублей
-PLATFORM = "youtube"                   # Платформа (youtube)
-SEARCH_KEYWORDS = ["temu haul", "budget finds", "ali-express finds", "unboxing toys"]
-MAX_RESULTS_PER_KEYWORD = 50
-# =============================================
-
-def load_master_database(file_path):
-    """Загружает уже имеющиеся почты из мастер-файла для исключения дублей."""
-    if not os.path.exists(file_path):
-        return pd.DataFrame(columns=['Email', 'Channel Name'])
+def process_and_deduplicate_leads(new_data_list_or_df, master_db='all_accumulated_leads.csv', output_session='outreach_ready.csv'):
     try:
-        df = pd.read_excel(file_path)
-        if 'Email' in df.columns and 'Channel Name' in df.columns:
-            return df
+        print("🔄 [Обработка] Запуск проверки и дедупликации базы...")
+        
+        # 1. Приводим входящие данные к DataFrame с защитой
+        if isinstance(new_data_list_or_df, list):
+            df_new = pd.DataFrame(new_data_list_or_df)
+        elif isinstance(new_data_list_or_df, pd.DataFrame):
+            df_new = new_data_list_or_df.copy()
+        else:
+            print("❌ [Ошибка] Неверный формат входных данных.")
+            return None
+
+        if df_new.empty or 'Email' not in df_new.columns or 'Channel Title' not in df_new.columns:
+            print("⚠️ [Предупреждение] В данных отсутствуют обязательные колонки 'Channel Title' или 'Email'.")
+            return None
+
+        # Очистка данных
+        clean_new = df_new[['Channel Title', 'Email']].dropna().copy()
+        clean_new['Email'] = clean_new['Email'].astype(str).str.strip().str.lower()
+        clean_new['Channel Title'] = clean_new['Channel Title'].astype(str).str.strip()
+        clean_new = clean_new.drop_duplicates(subset=['Email']).reset_index(drop=True)
+
+        # 2. Проверка накопительной базы
+        if os.path.exists(master_db):
+            try:
+                master_df = pd.read_csv(master_db, encoding='utf-8-sig')
+                master_df['Email'] = master_df['Email'].astype(str).str.strip().str.lower()
+                existing_emails = set(master_df['Email'])
+            except Exception as e:
+                print(f"⚠️ [Ошибка чтения накопительной базы, создаем заново]: {e}")
+                master_df = pd.DataFrame(columns=['Channel Title', 'Email'])
+                existing_emails = set()
+        else:
+            master_df = pd.DataFrame(columns=['Channel Title', 'Email'])
+            existing_emails = set()
+
+        # 3. Фильтрация уникальных
+        unique_leads = clean_new[~clean_new['Email'].isin(existing_emails)].copy()
+
+        if unique_leads.empty:
+            print("ℹ️ [Инфо] Новых уникальных контактов нет. База актуальна.")
+            return None
+
+        # 4. Сохранение результатов
+        updated_master = pd.concat([master_df, unique_leads], ignore_index=True)
+        updated_master.to_csv(master_db, index=False, encoding='utf-8-sig')
+
+        unique_leads.to_csv(output_session, index=False, encoding='utf-8-sig')
+
+        print(f"✅ [Успех] Добавлено новых уникальных лидов: {len(unique_leads)}")
+        print(f"📊 [Статистика] Всего в базе: {len(updated_master)}")
+        print(f"📁 [Готово] Файл сессии сохранен: {output_session}")
+        return output_session
+
     except Exception as e:
-        print(f"Ошибка при чтении мастер-файла: {e}")
-    return pd.DataFrame(columns=['Email', 'Channel Name'])
+        print(f"❌ [Критическая ошибка скрипта]: {e}")
+        return None
 
-def extract_emails(text):
-    """Ищет e-mail адреса в тексте с помощью регулярного выражения."""
-    if not text:
-        return []
-    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-    return re.findall(email_pattern, text)
-
-def main():
-    youtube = build("youtube", "v3", developerKey=API_KEY)
+if __name__ == '__main__':
+    print("🚀 Старт скрипта...")
     
-    # 1. Загружаем мастер-базу
-    master_df = load_master_database(MASTER_FILE)
-    existing_emails = set(master_df['Email'].dropna().astype(str).str.lower().str.strip())
-    print(f"В общей базе уже накоплено контактов: {len(existing_emails)}")
+    # Тестовые данные для проверки стабильности
+    test_data = [
+        {"Channel Title": "Test Channel 1", "Email": "test1@gmail.com"},
+        {"Channel Title": "Test Channel 2", "Email": "test2@gmail.com"}
+    ]
     
-    new_records = []
-    seen_in_run = set()
-
-    for keyword in SEARCH_KEYWORDS:
-        print(f"Ищем по ключевому слову: '{keyword}'...")
-        try:
-            # 2. Поиск видео
-            search_response = youtube.search().list(
-                q=keyword,
-                type="video",
-                part="snippet",
-                maxResults=MAX_RESULTS_PER_KEYWORD
-            ).execute()
-
-            channel_ids = [item['snippet']['channelId'] for item in search_response.get('items', [])]
-            channel_ids = list(set(channel_ids))
-
-            if not channel_ids:
-                continue
-
-            # 3. Получение данных каналов (название + описание)
-            channels_response = youtube.channels().list(
-                id=",".join(channel_ids),
-                part="snippet"
-            ).execute()
-
-            # 4. Извлечение email и связка с названием канала
-            for channel in channels_response.get('items', []):
-                snippet = channel['snippet']
-                channel_title = snippet.get('title', 'Unknown')
-                description = snippet.get('description', '')
-                
-                found_emails = extract_emails(description)
-                
-                for email in found_emails:
-                    email_clean = email.lower().strip()
-                    if email_clean not in existing_emails and email_clean not in seen_in_run:
-                        seen_in_run.add(email_clean)
-                        new_records.append({
-                            'Email': email_clean,
-                            'Channel Name': channel_title
-                        })
-                        
-        except Exception as e:
-            print(f"Ошибка при обработке запроса '{keyword}': {e}")
-            break
-
-    # 5. Сохранение результатов
-    if new_records:
-        df_new = pd.DataFrame(new_records)
-        
-        # Объединяем со старой мастер-базой
-        combined_df = pd.concat([master_df, df_new], ignore_index=True)
-        combined_df.drop_duplicates(subset=['Email'], keep='first', inplace=True)
-        
-        # Обновляем главный файл
-        combined_df.to_excel(MASTER_FILE, index=False)
-        
-        # Создаем отчетный файл для текущего запуска
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        output_filename = f"{PLATFORM}_{timestamp}_{len(new_records)}_emails.xlsx"
-        df_new.to_excel(output_filename, index=False)
-        
-        print(f"Успешно! Найдено новых уникальных контактов: {len(new_records)}")
-        print(f"Создан отчет: {output_filename}")
-        print(f"Всего в общей базе теперь: {len(combined_df)}")
-    else:
-        print("Новых почт не найдено (все совпали с уже имеющейся базой).")
-
-if __name__ == "__main__":
-    main()
+    process_and_deduplicate_leads(test_data)
