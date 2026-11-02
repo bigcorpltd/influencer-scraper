@@ -38,7 +38,7 @@ with st.sidebar:
 col1, col2, col3 = st.columns(3)
 with col1:
     platform = st.selectbox("Platform", ["YouTube", "Instagram", "TikTok"])
-    query = st.text_input("Search Keyword / Niche", "tech")
+    query = st.text_input("Search Keyword / Username", "tech")
 
 with col2:
     min_subs = st.number_input("Min Followers", value=1000, step=500)
@@ -49,7 +49,7 @@ with col3:
     region_code = st.selectbox("Регион (YouTube Region)", ["ALL", "US", "ES", "RU", "GB", "DE", "FR", "CA", "AU"])
     relevance_language = st.selectbox("Язык контента (Relevance Language)", ["ALL", "en", "es", "ru", "fr", "de"])
 
-keyword_filter = st.text_input("Обязательное слово в описании (оставьте пустым для отключения)", "")
+keyword_filter = st.text_input("Обязательное слово в био (оставьте пустым для отключения)", "")
 
 def extract_email(text):
     if not text:
@@ -158,22 +158,21 @@ if st.button("🚀 Start Scraping"):
         if not apify_token:
             st.error("Укажите Apify API Token в сайдбаре слева")
         else:
-            with st.spinner(f"Запуск Apify парсера для {platform}..."):
+            with st.spinner(f"Запуск Apify парсера профилей для {platform}..."):
                 try:
                     client = ApifyClient(apify_token)
                     
                     if platform == "Instagram":
-                        # Используем стабильный поиск по хештегу/ключу через directUrls
+                        # Парсим именно профили через usernames или directUrls на аккаунты
                         run_input = {
-                            "search": query,
-                            "searchType": "hashtag",
+                            "usernames": [query.strip().replace("@", "")],
                             "resultsLimit": limit,
                         }
                         actor_id = "apify/instagram-scraper"
                     else:
-                        # Поиск по хэштегам/ключам в TikTok
+                        # Парсим профили в TikTok
                         run_input = {
-                            "searchQueries": [query],
+                            "profiles": [query.strip().replace("@", "")],
                             "resultsPerPage": limit,
                             "shouldDownloadVideos": False,
                         }
@@ -188,11 +187,16 @@ if st.button("🚀 Start Scraping"):
                         dataset_id = getattr(run, "defaultDatasetId", None)
                     
                     if not dataset_id:
-                        st.error("Apify завершил задачу, но dataset ID не найден. Попробуйте уменьшить лимит или изменить поисковый запрос.")
+                        st.error("Apify завершил задачу, но dataset ID не найден.")
                     else:
                         results = []
                         for item in client.dataset(dataset_id).iterate_items():
-                            email = item.get("email") or extract_email(item.get("biography") or item.get("signature", ""))
+                            bio_text = item.get("biography") or item.get("signature") or item.get("bio") or ""
+                            email = item.get("email") or extract_email(bio_text)
+                            
+                            if keyword_filter and keyword_filter.lower() not in bio_text.lower():
+                                continue
+                                
                             if email and email != "N/A":
                                 results.append({
                                     "Platform": platform,
@@ -201,7 +205,7 @@ if st.button("🚀 Start Scraping"):
                                     "Email": email.lower(),
                                     "Handle": f"@{item.get('username') or item.get('uniqueId', 'N/A')}",
                                     "Channel ID": item.get("id", "N/A"),
-                                    "Link": item.get("url") or f"https://www.{platform.lower()}.com/@{item.get('username', '')}"
+                                    "Link": item.get("url") or f"https://www.{platform.lower()}.com/@{item.get('username') or item.get('uniqueId', '')}"
                                 })
                                 
                         df_apify = pd.DataFrame(results)
@@ -213,7 +217,7 @@ if st.button("🚀 Start Scraping"):
                             csv = df_apify.to_csv(index=False).encode('utf-8')
                             st.download_button("📥 Скачать батч Apify (CSV)", csv, f"{platform.lower()}_leads.csv", "text/csv")
                         else:
-                            st.warning("Парсер отработал, но контактов с открытыми e-mail по данному запросу не найдено.")
+                            st.warning("Парсер профилей отработал, но почты в биографии не найдены.")
                         
                 except Exception as e:
                     st.error(f"Ошибка при работе с Apify API: {str(e)}")
