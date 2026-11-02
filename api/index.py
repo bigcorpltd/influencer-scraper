@@ -156,7 +156,7 @@ if st.button("🚀 Start Scraping"):
                     
     elif platform in ["Instagram", "TikTok"]:
         if not apify_token:
-            st.error("Uкажите Apify API Token в сайдбаре слева")
+            st.error("Укажите Apify API Token в сайдбаре слева")
         else:
             with st.spinner(f"Запуск Apify парсера для {platform}..."):
                 try:
@@ -178,30 +178,35 @@ if st.button("🚀 Start Scraping"):
                         
                     run = client.actor(actor_id).call(run_input=run_input)
                     
-                    results = []
-                    for item in client.dataset(run["defaultDatasetId"]).iterate_items():
-                        email = item.get("email") or extract_email(item.get("biography") or item.get("signature", ""))
-                        if email and email != "N/A":
-                            results.append({
-                                "Platform": platform,
-                                "Channel Title": item.get("fullName") or item.get("nickname") or item.get("username", "N/A"),
-                                "Subscribers": item.get("followersCount") or item.get("followerCount", 0),
-                                "Email": email.lower(),
-                                "Handle": f"@{item.get('username') or item.get('uniqueId', 'N/A')}",
-                                "Channel ID": item.get("id", "N/A"),
-                                "Link": item.get("url") or f"https://www.{platform.lower()}.com/@{item.get('username', '')}"
-                            })
-                            
-                    df_apify = pd.DataFrame(results)
-                    if not df_apify.empty:
-                        df_apify = df_apify.drop_duplicates(subset=["Email"])
-                        st.session_state.leads_db = pd.concat([st.session_state.leads_db, df_apify]).drop_duplicates(subset=["Email"]).reset_index(drop=True)
-                        st.success(f"Успешно собрано через Apify! Добавлено лидов: {len(df_apify)} | Всего в базе: {len(st.session_state.leads_db)}")
-                        st.dataframe(df_apify)
-                        csv = df_apify.to_csv(index=False).encode('utf-8')
-                        st.download_button("📥 Скачать батч Apify (CSV)", csv, f"{platform.lower()}_leads.csv", "text/csv")
+                    dataset_id = run.get("defaultDatasetId") if isinstance(run, dict) else getattr(run, "defaultDatasetId", None)
+                    
+                    if not dataset_id:
+                        st.error("Не удалось получить dataset ID от Apify.")
                     else:
-                        st.warning("Парсер отработал, но контактов с открытыми e-mail по данному запросу не найдено.")
+                        results = []
+                        for item in client.dataset(dataset_id).iterate_items():
+                            email = item.get("email") or extract_email(item.get("biography") or item.get("signature", ""))
+                            if email and email != "N/A":
+                                results.append({
+                                    "Platform": platform,
+                                    "Channel Title": item.get("fullName") or item.get("nickname") or item.get("username", "N/A"),
+                                    "Subscribers": item.get("followersCount") or item.get("followerCount", 0),
+                                    "Email": email.lower(),
+                                    "Handle": f"@{item.get('username') or item.get('uniqueId', 'N/A')}",
+                                    "Channel ID": item.get("id", "N/A"),
+                                    "Link": item.get("url") or f"https://www.{platform.lower()}.com/@{item.get('username', '')}"
+                                })
+                                
+                        df_apify = pd.DataFrame(results)
+                        if not df_apify.empty:
+                            df_apify = df_apify.drop_duplicates(subset=["Email"])
+                            st.session_state.leads_db = pd.concat([st.session_state.leads_db, df_apify]).drop_duplicates(subset=["Email"]).reset_index(drop=True)
+                            st.success(f"Успешно собрано через Apify! Добавлено лидов: {len(df_apify)} | Всего в базе: {len(st.session_state.leads_db)}")
+                            st.dataframe(df_apify)
+                            csv = df_apify.to_csv(index=False).encode('utf-8')
+                            st.download_button("📥 Скачать батч Apify (CSV)", csv, f"{platform.lower()}_leads.csv", "text/csv")
+                        else:
+                            st.warning("Парсер отработал, но контактов с открытыми e-mail по данному запросу не найдено.")
                         
                 except Exception as e:
                     st.error(f"Ошибка при работе с Apify API: {str(e)}")
