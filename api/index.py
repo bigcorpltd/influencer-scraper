@@ -2,12 +2,19 @@ import streamlit as st
 import pandas as pd
 import requests
 import re
+import socket
 from googleapiclient.discovery import build
 from apify_client import ApifyClient
 import os
 
 st.set_page_config(page_title="Multi-Platform Influencer Finder", layout="wide")
 st.title("🎯 Multi-Platform Influencer Leads Finder")
+
+# Базовый список одноразовых почтовых сервисов для фильтрации
+DISPOSABLE_DOMAINS = {
+    "tempmail.com", "guerrillamail.com", "10minutemail.com", "mailinator.com",
+    "trashmail.com", "yopmail.com", "sharklasers.com", "getnada.com"
+}
 
 if "leads_db" not in st.session_state:
     st.session_state.leads_db = pd.DataFrame(columns=["Platform", "Channel Title", "Subscribers", "Email", "Handle", "Channel ID", "Link"])
@@ -18,17 +25,21 @@ with st.sidebar:
     apify_token = st.text_input("Apify API Token (IG/TikTok)", type="password")
     
     st.markdown("---")
+    st.header("⚙️ Валидация и фильтры")
+    strict_validation = st.checkbox("Строгая валидация e-mail (отсекать temp-mail)", value=True)
+    
+    st.markdown("---")
     st.header("💾 База лидов")
     total_leads = len(st.session_state.leads_db)
-    st.info(f"Накоплено уникальных лидов: {total_leads}")
+    st.info(f"Накоплено чистых лидов: {total_leads}")
     
     if total_leads > 0:
         csv_all = st.session_state.leads_db.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Скачать всю базу (CSV)", csv_all, "all_accumulated_leads.csv", "text/csv")
+        st.download_button("📥 Скачать всю базу (CSV)", csv_all, "all_validated_leads.csv", "text/csv")
         
         outreach_df = st.session_state.leads_db[["Email", "Channel Title"]].rename(columns={"Channel Title": "Name"})
         csv_outreach = outreach_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📨 Скачать для рассыльщиков (Email, Name)", csv_outreach, "outreach_ready.csv", "text/csv")
+        st.download_button("📨 Скачать для Sender.net (Email, Name)", csv_outreach, "outreach_ready.csv", "text/csv")
         
         if st.button("🗑 Очистить всю базу"):
             st.session_state.leads_db = pd.DataFrame(columns=["Platform", "Channel Title", "Subscribers", "Email", "Handle", "Channel ID", "Link"])
@@ -50,14 +61,30 @@ with col3:
 
 keyword_filter = st.text_input("Обязательное слово в био (оставьте пустым для отключения)", "")
 
-def extract_email(text):
-    if not text:
-        return "N/A"
-    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-    match = re.search(email_pattern, text)
-    return match.group(0).lower() if match else "N/A"
+def validate_email_strict(email, check_disposable=True):
+    if not email or email == "N/A":
+        return None
+    
+    email = email.lower().strip()
+    
+    # 1. Синтаксическая проверка RFC 5322
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, email):
+        return None
+        
+    domain = email.split('@')[-1]
+    
+    # 2. Фильтрация одноразовых доменов
+    if check_disposable and domain in DISPOSABLE_DOMAINS:
+        return None
+        
+    # 3. Исключение невалидных/тестовых расширений
+    if domain.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.local', '.invalid')):
+        return None
+        
+    return email
 
-def scrape_youtube_optimized(base_query, min_s, max_s, target_limit, api_key, region, lang, kw_filter):
+def scrape_youtube_optimized(base_query, min_s, max_s, target_limit, api_key, region, lang, kw_filter, use_validation):
     youtube = build('youtube', 'v3', developerKey=api_key)
     results = []
     seen_emails = set(st.session_state.leads_db['Email'].tolist()) if not st.session_state.leads_db.empty else set()
@@ -99,7 +126,7 @@ def scrape_youtube_optimized(base_query, min_s, max_s, target_limit, api_key, re
         
         items = ch_res.get('items', [])
         scanned_count += len(items)
-        status_text.text(f"Просканировано: {scanned_count} | Найдено новых уникальных: {len(results)}")
+        status_text.text(f"Просканировано: {scanned_count} | Прошло валидацию: {len(results)}")
         
         for item in items:
             ch_id = item['id']
@@ -113,9 +140,12 @@ def scrape_youtube_optimized(base_query, min_s, max_s, target_limit, api_key, re
                 if kw_filter and kw_filter.lower() not in description.lower():
                     continue
                     
-                email = extract_email(description)
+                raw_email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', description)
+                raw_email = raw_email_match.group(0) if raw_email_match else None
                 
-                if email != "N/A" and email not in seen_emails:
+                email = validate_email_strict(raw_email, check_disposable=use_validation)
+                
+                if email and email not in seen_emails:
                     seen_emails.add(email)
                     seen_ids.add(ch_id)
                     results.append({
@@ -137,39 +167,37 @@ def scrape_youtube_optimized(base_query, min_s, max_s, target_limit, api_key, re
     status_text.empty()
     return pd.DataFrame(results), scanned_count
 
-if st.button("🚀 Start Scraping"):
+if st.button("🚀 Start Scraping & Validating"):
     if platform == "YouTube":
         if not yt_api_key:
             st.error("Укажите YouTube Data API Key в сайдбаре слева")
         else:
-            with st.spinner("Экономичный поиск и накопление базы..."):
-                df, scanned = scrape_youtube_optimized(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter)
+            with st.spinner("Поиск и валидация каналов YouTube..."):
+                df, scanned = scrape_youtube_optimized(query, min_subs, max_subs, limit, yt_api_key, region_code, relevance_language, keyword_filter, strict_validation)
                 if not df.empty:
                     st.session_state.leads_db = pd.concat([st.session_state.leads_db, df]).drop_duplicates(subset=["Email"]).reset_index(drop=True)
-                    st.success(f"Просканировано: {scanned} | Добавлено новых: {len(df)} | Всего в базе: {len(st.session_state.leads_db)}")
+                    st.success(f"Просканировано: {scanned} | Прошло валидацию: {len(df)} | Всего в базе: {len(st.session_state.leads_db)}")
                     st.dataframe(df)
                     csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Скачать этот батч (CSV)", csv, "influencers_batch.csv", "text/csv")
+                    st.download_button("📥 Скачать валидированный батч (CSV)", csv, "youtube_validated_leads.csv", "text/csv")
                 else:
-                    st.warning(f"Просканировано каналов: {scanned}, но новых уникальных E-mail не найдено.")
+                    st.warning(f"Просканировано каналов: {scanned}, но валидных E-mail не найдено.")
                     
     elif platform in ["Instagram", "TikTok"]:
         if not apify_token:
             st.error("Укажите Apify API Token в сайдбаре слева")
         else:
-            with st.spinner(f"Запуск парсера профилей для {platform}..."):
+            with st.spinner(f"Запуск парсинга и валидации лидов для {platform}..."):
                 try:
                     client = ApifyClient(apify_token)
                     
                     if platform == "Instagram":
-                        # Используем специализированный актер для парсинга именно профилей/аккаунтов
                         run_input = {
                             "usernames": [query.strip().replace("@", "")],
                             "resultsLimit": limit,
                         }
                         actor_id = "apify/instagram-profile-scraper"
                     else:
-                        # Профильный парсер TikTok
                         run_input = {
                             "profiles": [query.strip().replace("@", "")],
                             "resultsPerPage": limit,
@@ -191,17 +219,23 @@ if st.button("🚀 Start Scraping"):
                         results = []
                         for item in client.dataset(dataset_id).iterate_items():
                             bio_text = item.get("biography") or item.get("signature") or item.get("bio") or item.get("description") or ""
-                            email = item.get("email") or item.get("businessEmail") or extract_email(bio_text)
+                            
+                            raw_email = item.get("email") or item.get("businessEmail")
+                            if not raw_email:
+                                match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', bio_text)
+                                raw_email = match.group(0) if match else None
+                                
+                            email = validate_email_strict(raw_email, check_disposable=strict_validation)
                             
                             if keyword_filter and keyword_filter.lower() not in bio_text.lower():
                                 continue
                                 
-                            if email and email != "N/A":
+                            if email:
                                 results.append({
                                     "Platform": platform,
                                     "Channel Title": item.get("fullName") or item.get("nickname") or item.get("username", "N/A"),
                                     "Subscribers": item.get("followersCount") or item.get("followerCount", 0),
-                                    "Email": email.lower(),
+                                    "Email": email,
                                     "Handle": f"@{item.get('username') or item.get('uniqueId', 'N/A')}",
                                     "Channel ID": item.get("id", "N/A"),
                                     "Link": item.get("url") or f"https://www.{platform.lower()}.com/@{item.get('username') or item.get('uniqueId', '')}"
@@ -211,12 +245,12 @@ if st.button("🚀 Start Scraping"):
                         if not df_apify.empty:
                             df_apify = df_apify.drop_duplicates(subset=["Email"])
                             st.session_state.leads_db = pd.concat([st.session_state.leads_db, df_apify]).drop_duplicates(subset=["Email"]).reset_index(drop=True)
-                            st.success(f"Успешно собрано через Apify! Добавлено лидов: {len(df_apify)} | Всего в базе: {len(st.session_state.leads_db)}")
+                            st.success(f"Успешно собрано и провалидировано! Добавлено лидов: {len(df_apify)} | Всего в базе: {len(st.session_state.leads_db)}")
                             st.dataframe(df_apify)
                             csv = df_apify.to_csv(index=False).encode('utf-8')
-                            st.download_button("📥 Скачать батч Apify (CSV)", csv, f"{platform.lower()}_leads.csv", "text/csv")
+                            st.download_button("📥 Скачать валидированный батч (CSV)", csv, f"{platform.lower()}_validated_leads.csv", "text/csv")
                         else:
-                            st.warning("Парсер профилей отработал, но почты в биографии не найдены.")
+                            st.warning("Парсер профилей отработал, но валидные e-mail не найдена.")
                         
                 except Exception as e:
                     st.error(f"Ошибка при работе с Apify API: {str(e)}")
